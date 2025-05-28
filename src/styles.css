@@ -1,0 +1,32 @@
+.app {
+  text-align: center;
+  padding: 20px;
+}
+
+.camera-container {
+  position: relative;
+  margin: 0 auto;
+  width: 640px;
+}
+
+.orientation-feedback {
+  margin-top: 20px;
+}
+
+.arrow-left, .arrow-right {
+  font-size: 2rem;
+  opacity: 0.3;
+  position: absolute;
+  top: 50%;
+}
+
+.arrow-left { left: 20px; }
+.arrow-right { right: 20px; }
+.arrow-left.active, .arrow-right.active {
+  opacity: 1;
+  color: green;
+}
+
+button:disabled {
+  background: #ccc;
+}
