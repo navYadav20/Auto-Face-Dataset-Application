@@ -12,6 +12,11 @@ dist
 dist-ssr
 *.local
 
+src/components/CameraFeedv2.jsx
+src/components/CameraFeedv7.jsx
+src/components/CameraFeedv13.jsx
+
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

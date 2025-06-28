@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
+import JSZip from "jszip";
+import { saveAs } from "file-saver";
 import { FaceMesh } from "@mediapipe/face_mesh";
 import { Camera } from "@mediapipe/camera_utils";
 import Webcam from "react-webcam";
@@ -8,58 +10,113 @@ import {
   calculateYaw,
   calculateRoll,
 } from "../utils/angleUtils";
-import { checkLightingConditions } from "../utils/LightingUtils";
+import { useLocation } from "react-router-dom";
 
 export default function CameraFeed() {
-  const [lighting, setLighting] = useState({
-    passed: false,
-    details: null,
-  });
-
-  // smooth for the pitch
+  // Smoothing buffers
   const pitchBuffer = useRef([]);
+  const yawBuffer = useRef([]);
+  const rollBuffer = useRef([]);
+
   function getSmoothedPitch(newPitch, windowSize = 5) {
     pitchBuffer.current.push(newPitch);
     if (pitchBuffer.current.length > windowSize) {
-      pitchBuffer.current.shift(); // Keep the buffer size fixed
+      pitchBuffer.current.shift();
     }
-    const sum = pitchBuffer.current.reduce((a, b) => a + b, 0);
-    return sum / pitchBuffer.current.length;
+    return (
+      pitchBuffer.current.reduce((a, b) => a + b, 0) /
+      pitchBuffer.current.length
+    );
   }
 
-  // smooth for the Yaw
-  const yawBuffer = useRef([]);
   function getSmoothedYaw(newYaw, windowSize = 5) {
     yawBuffer.current.push(newYaw);
     if (yawBuffer.current.length > windowSize) {
       yawBuffer.current.shift();
     }
-    const sum = yawBuffer.current.reduce((a, b) => a + b, 0);
-    return sum / yawBuffer.current.length;
+    return (
+      yawBuffer.current.reduce((a, b) => a + b, 0) / yawBuffer.current.length
+    );
   }
-
-  // smooth fot the roll
-  const rollBuffer = useRef([]);
 
   function getSmoothedRoll(newRoll, windowSize = 5) {
     rollBuffer.current.push(newRoll);
     if (rollBuffer.current.length > windowSize) {
       rollBuffer.current.shift();
     }
-    const sum = rollBuffer.current.reduce((a, b) => a + b, 0);
-    return sum / rollBuffer.current.length;
+    return (
+      rollBuffer.current.reduce((a, b) => a + b, 0) / rollBuffer.current.length
+    );
   }
 
   const webcamRef = useRef(null);
   const canvasRef = useRef(null);
+  const overlayCanvasRef = useRef(null); // New canvas for drawing overlay
   const [currentOrientation, setCurrentOrientation] = useState(0);
   const [angles, setAngles] = useState({ pitch: 0, yaw: 0, roll: 0 });
   const [isAligned, setIsAligned] = useState(false);
   const [photos, setPhotos] = useState([]);
+  const location = useLocation();
+  const { rollNumber, wearsSpectacles } = location.state || {};
 
-  // Simplified alignment check (pitch only)
-  const checkAlignment = (pitch) => {
-    return ORIENTATION_SEQUENCE[currentOrientation].condition(pitch);
+  // bounding box on face and dimension
+  const drawFaceBox = (ctx, landmarks, isAligned) => {
+    // Get extreme points of the face
+    let minX = Infinity,
+      minY = Infinity;
+    let maxX = -Infinity,
+      maxY = -Infinity;
+
+    landmarks.forEach((landmark) => {
+      const x = overlayCanvasRef.current.width - landmark.x * overlayCanvasRef.current.width; //  mirror X
+      const y = landmark.y * overlayCanvasRef.current.height;
+
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    });
+
+    // Calculate passport crop area
+    const faceHeight = (maxY - minY) * 1.8; // 80% more than face height
+    const faceWidth = faceHeight * 0.77; // Standard passport ratio
+
+    const cropX = (minX + maxX) / 2 - faceWidth / 2;
+    const cropY = minY - faceHeight * 0.3; // 30% space above head
+
+    // Draw the passport crop guide
+    ctx.strokeStyle = isAligned
+      ? "rgba(0, 255, 0, 0.7)"
+      : "rgba(255, 255, 255, 0.7)";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 5]);
+    ctx.strokeRect(cropX, cropY, faceWidth, faceHeight);
+
+    // Add some padding
+    const padding = 20;
+    minX -= padding;
+    minY -= padding;
+    maxX += padding;
+    maxY += padding;
+
+    // Draw the box
+    ctx.strokeStyle = isAligned ? "#00FF00" : "#FF0000";
+    ctx.lineWidth = 4;
+    ctx.setLineDash(isAligned ? [] : [5, 5]);
+    ctx.strokeRect(minX, minY, maxX - minX, maxY - minY);
+
+    // Add semi-transparent fill
+    ctx.fillStyle = isAligned ? "rgba(0, 255, 0, 0.1)" : "rgba(255, 0, 0, 0.1)";
+    ctx.fillRect(minX, minY, maxX - minX, maxY - minY);
+
+    // Add label
+    ctx.fillStyle = isAligned ? "#00FF00" : "#FF0000";
+    ctx.font = "16px Arial";
+    ctx.fillText(
+      isAligned ? "Aligned_capture" : "Adjust your face",
+      minX,
+      minY - 10
+    );
   };
 
   const capturePhoto = () => {
@@ -68,14 +125,44 @@ export default function CameraFeed() {
     const canvas = canvasRef.current;
     const video = webcamRef.current.video;
 
-    console.log(canvas);
-    console.log(video);
     if (canvas && video) {
+      // Set canvas to video dimensions
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       const ctx = canvas.getContext("2d");
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const photo = canvas.toDataURL("image/jpeg");
+
+      // Create a new canvas for cropped image
+      const cropCanvas = document.createElement("canvas");
+      const cropCtx = cropCanvas.getContext("2d");
+
+      // Calculate passport-style dimensions (adjust as needed)
+      const faceWidth = canvas.width * 1; // 50% of original width
+      const faceHeight = faceWidth * 1; // Standard passport ratio (35x45mm)
+
+      // Calculate crop area (centered on face)
+      const cropX = (canvas.width - faceWidth) / 2;
+      const cropY = (canvas.height - faceHeight) * 0.85; // 25% from top
+
+      // Set cropped canvas size
+      cropCanvas.width = faceWidth;
+      cropCanvas.height = faceHeight;
+
+      // Draw cropped portion
+      cropCtx.drawImage(
+        canvas,
+        cropX,
+        cropY, // Source x, y
+        faceWidth,
+        faceHeight, // Source width, height
+        0,
+        0, // Destination x, y
+        faceWidth,
+        faceHeight // Destination width, height
+      );
+
+      // Get cropped image data
+      const photo = cropCanvas.toDataURL("image/jpeg", 0.92); // 92% quality
 
       setPhotos([
         ...photos,
@@ -87,26 +174,33 @@ export default function CameraFeed() {
 
       if (currentOrientation < ORIENTATION_SEQUENCE.length - 1) {
         setCurrentOrientation(currentOrientation + 1);
-      }
+      } 
+       
     }
   };
 
-  // lighting effect like brightness, contrast and BG
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (webcamRef.current) {
-        const canvas = document.createElement("canvas");
-        canvas.width = webcamRef.current.video.videoWidth;
-        canvas.height = webcamRef.current.video.videoHeight;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(webcamRef.current.video, 0, 0);
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        setLighting(checkLightingConditions(imageData));
-      }
-    }, 1000); // Check every second
+  const savePhotos = async () => {
+    if (photos.length === 0) return;
 
-    return () => clearInterval(interval);
-  }, []);
+    try {
+      const zip = new JSZip();
+      const folder = zip.folder(rollNumber);
+
+      await Promise.all(
+        photos.map(async (photo, index) => {
+          const response = await fetch(photo.image);
+          const blob = await response.blob();
+          folder.file(`${photo.orientation}_${index + 1}.jpg`, blob);
+        })
+      );
+
+      const content = await zip.generateAsync({ type: "blob" });
+      saveAs(content, `${rollNumber}.zip`);
+    } catch (error) {
+      console.error("Error creating zip file:", error);
+      alert("Failed to save photos. Please try again.");
+    }
+  };
 
   useEffect(() => {
     const faceMesh = new FaceMesh({
@@ -122,9 +216,20 @@ export default function CameraFeed() {
     });
 
     faceMesh.onResults((results) => {
+      const overlayCtx = overlayCanvasRef.current.getContext("2d");
+
+      // Clear previous drawings
+      overlayCtx.clearRect(
+        0,
+        0,
+        overlayCanvasRef.current.width,
+        overlayCanvasRef.current.height
+      );
+
       if (results.multiFaceLandmarks?.length > 0) {
         const landmarks = results.multiFaceLandmarks[0];
 
+        // Calculate angles
         const rawPitch = calculatePitch(landmarks);
         const rawYaw = calculateYaw(landmarks);
         const rawRoll = calculateRoll(landmarks);
@@ -139,24 +244,15 @@ export default function CameraFeed() {
           roll: smoothedRoll,
         });
 
-        setIsAligned(
-          ORIENTATION_SEQUENCE[currentOrientation].condition(
-            smoothedYaw,
-            smoothedPitch,
-            smoothedRoll
-          )
+        const aligned = ORIENTATION_SEQUENCE[currentOrientation].condition(
+          smoothedYaw,
+          smoothedPitch,
+          smoothedRoll
         );
+        setIsAligned(aligned);
 
-        console.log("Face Dimensions:", {
-          height: Math.abs(landmarks[152].y - landmarks[10].y),
-          width: Math.abs(landmarks[454].x - landmarks[234].x),
-        });
-
-        console.log("Normalized Angles:", {
-          pitch: smoothedPitch,
-          yaw: smoothedYaw,
-          roll: smoothedRoll,
-        });
+        // Draw face bounding box
+        drawFaceBox(overlayCtx, landmarks, aligned);
       }
     });
 
@@ -176,64 +272,98 @@ export default function CameraFeed() {
 
   return (
     <div className="camera-container">
-      <div className="angle-debug">
-        {/* <p>Pitch: {angles.pitch.toFixed(1)}°</p>
-        <p>Yaw: {angles.yaw.toFixed(1)}°</p>
-        <p>Roll: {angles.roll.toFixed(1)}°</p>
-        <p>Target: {ORIENTATION_SEQUENCE[currentOrientation].name}</p> */}
+      <h1>Roll Number: {rollNumber}</h1>
+
+      <div
+        className="video-wrapper"
+        style={{ position: "relative", width: "640px", height: "480px" }}
+      >
+        <Webcam
+          ref={webcamRef}
+          mirrored={true}
+          videoConstraints={{
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            facingMode: "user",
+          }}
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: "100%",
+            height: "100%",
+          }}
+        />
+        <canvas
+          ref={overlayCanvasRef}
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: "100%",
+            height: "100%",
+            pointerEvents: "none", // Allows clicks to pass through to the video
+          }}
+          width={640}
+          height={480}
+        />
       </div>
 
-      <Webcam ref={webcamRef} mirrored={true} />
       <canvas ref={canvasRef} style={{ display: "none" }} />
+
       <div className="orientation-feedback">
         <h3>Current Target: {ORIENTATION_SEQUENCE[currentOrientation].name}</h3>
         <p>
           Pitch: {angles.pitch.toFixed(1)}° | Yaw: {angles.yaw.toFixed(1)}° |
           Roll: {angles.roll.toFixed(1)}°
         </p>
-        {/* <p>Yaw: {angles.yaw.toFixed(1)}°</p>
-        <p>Roll: {angles.roll.toFixed(1)}°</p> */}
         <p>Status: {isAligned ? "Ready to Capture!" : "Adjust your face"}</p>
       </div>
-        { /* Add lighting feedback UI */}
-      <div className="lighting-feedback">
-        {lighting.details && (
-          <>
-            <div>Brightness: {lighting.details.brightness}%</div>
-            <div>Background: {lighting.details.backgroundWhiteness}% white</div>
-            <div>Face Light: {lighting.details.faceIllumination}/255</div>
-          </>
-        )}
-        {/* {!lighting.passed && (
-          <div className="lighting-tips">
-            <p>Tips:</p>
-            <ul>
-              <li>Face a white wall</li>
-              <li>Avoid backlighting</li>
-              <li>Use even lighting</li>
-            </ul>
-          </div>
-        )} */}
-      </div>
+
       <button
         onClick={capturePhoto}
-        disabled={!isAligned || !lighting.passed}
-        className={`capture-btn ${
-          isAligned && lighting.passed ? "ready" : "disabled"
-        }`}
+        disabled={!isAligned}
+        className={isAligned ? "active-capture" : ""}
       >
-        {/* Capture {ORIENTATION_SEQUENCE[currentOrientation].name} */}
-        {lighting.passed ? "Capture" : "Improve Lighting"}
+        Capture {ORIENTATION_SEQUENCE[currentOrientation].name}
       </button>
+
       <div className="photo-grid">
         {photos.map((photo, i) => (
-          <div key={i}>
-            <img src={photo.image} alt={photo.orientation} width="100" />
-            <p>{photo.orientation}</p>
+          <div key={i} style={{ margin: "10px", textAlign: "center" }}>
+            <img
+              src={photo.image}
+              alt={photo.orientation}
+              style={{
+                width: "120px",
+                height: "156px", // 35x45mm ratio (1:1.3)
+                objectFit: "cover",
+                border: "1px solid #ddd",
+                borderRadius: "4px",
+              }}
+            />
+            <p style={{ marginTop: "5px" }}>{photo.orientation}</p>
           </div>
         ))}
       </div>
 
+      {photos.length > 0 && (
+        <button
+          onClick={savePhotos}
+          className="save-button"
+          style={{
+            marginTop: "20px",
+            padding: "10px 20px",
+            backgroundColor: "#4CAF50",
+            color: "white",
+            border: "none",
+            borderRadius: "4px",
+            cursor: "pointer",
+          }}
+        >
+          Download All Photos as ZIP
+        </button>
+      )}
     </div>
   );
 }

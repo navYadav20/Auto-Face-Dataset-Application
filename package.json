@@ -13,8 +13,15 @@
     "@mediapipe/camera_utils": "^0.3.1675466862",
     "@mediapipe/face_mesh": "^0.4.1633559619",
     "@techstark/opencv-js": "^4.10.0-release.1",
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "file-saver": "^2.0.5",
+    "googleapis": "^150.0.1",
+    "jszip": "^3.10.1",
+    "multer": "^2.0.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "react-router-dom": "^7.6.1",
     "react-webcam": "^7.2.0"
   },
   "devDependencies": {
