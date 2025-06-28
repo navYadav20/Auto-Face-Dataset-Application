@@ -1,26 +1,28 @@
 export const ORIENTATION_SEQUENCE = [
   {
-    name: "Looking Straight",
-    condition: (yaw, pitch, roll) => -5 <yaw && yaw < 5 && pitch > -3 && pitch < 10 && Math.abs(roll) < 5
+    name: "Look Straight till the circle is green ",
+    condition: (yaw, pitch, roll) =>
+    yaw > -8 && yaw < 8 && pitch > -10 && pitch < 14 && roll > -8 && roll < 8
+    
   },
   {
-    name: "Looking Left",
-    condition: (yaw, pitch, roll) => yaw > 25 && yaw < 33 &&
-      Math.abs(pitch) < 10 &&       // Limited vertical movement
-      Math.abs(roll) < 8  
+    name: "Look slowly-slowly left till the circle is green",
+    condition: (yaw, pitch, roll) => yaw > 22 && yaw < 40 &&
+      pitch < 12 && pitch > -12 && roll > -10 && roll < 10
   },
   {
-    name: "Looking Right",
-    condition: (yaw, pitch, roll) => yaw < -21 && yaw > -29 && Math.abs(pitch) < 10
+    name: "Look slowly-slowly Right till the circle is green",
+    condition: (yaw, pitch, roll) => yaw < -20 && yaw > -40 && 
+     pitch < 10 && pitch > -15 && roll > -10 && roll < 10
   },
   {
-    name: "Looking Up",
-    condition: (yaw, pitch, roll) => pitch < -15 && Math.abs(yaw) < 30
+    name: "Look Up slowly-slowly till the circle is green",
+    condition: (yaw, pitch, roll) => Math.abs(yaw) < 10  && pitch < -15 && pitch > -33
     // condition: (yaw, pitch, roll) => pitch > -8 && pitch < -14 && Math.abs(yaw) < 5 && Math.abs(roll) < 5
   },
   {
-    name: "Looking Down",
-    condition: (yaw, pitch, roll) => pitch<15 && pitch > 9 && Math.abs(yaw) < 5
+    name: "Look Down slowly-slowly till the circle is green",
+    condition: (yaw, pitch, roll) => pitch<40 && pitch > 25 && Math.abs(yaw) < 5 
   }
 ];
 
@@ -116,11 +118,5 @@ export function calculateRoll(landmarks) {
 
   return angleDeg;
 }
-
-
-
-
-
-
 
 
